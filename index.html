@@ -1,0 +1,333 @@
+<html>
+<head>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://www.w3schools.com/w3css/4/w3.css">
+
+  <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.6.2/proj4.min.js" integrity="sha512-EKjCCRjU5ClBwaRb6dGbElFNWJTE7Ek7+PlXelkum5uofPwlf6u2VRch1ty3csFCQn9XdyX89Te8jVg61qtm3Q==" crossorigin="anonymous"></script>
+
+  <script async src="https://cdn.jsdelivr.net/npm/geotiff"></script>
+
+<script>
+// the markers are stored in a global array
+var speciesMarkers = Array();
+
+var sepChar;
+
+var tiff;
+
+var canvas;
+
+var global_rgb, global_canvas;
+
+var layerControl;
+
+// I am too cheap to load them via ajax...
+proj4.defs("EPSG:31466","+proj=tmerc +lat_0=0 +lon_0=6 +k=1 +x_0=2500000 +y_0=0 +ellps=bessel +towgs84=598.1,73.7,418.2,0.202,0.045,-2.455,6.7 +units=m +no_defs");
+proj4.defs("EPSG:31467","+proj=tmerc +lat_0=0 +lon_0=9 +k=1 +x_0=3500000 +y_0=0 +ellps=bessel +towgs84=598.1,73.7,418.2,0.202,0.045,-2.455,6.7 +units=m +no_defs");
+proj4.defs("EPSG:31468","+proj=tmerc +lat_0=0 +lon_0=12 +k=1 +x_0=4500000 +y_0=0 +ellps=bessel +towgs84=598.1,73.7,418.2,0.202,0.045,-2.455,6.7 +units=m +no_defs");
+proj4.defs("EPSG:25832","+proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs");
+proj4.defs("EPSG:4647","+proj=tmerc +lat_0=0 +lon_0=9 +k=0.9996 +x_0=32500000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs");
+
+
+$(function() {
+ 
+  var map = L.map("map").setView([51.52, 11], 8);
+
+  // OSM layer
+  var osmLayer = L.tileLayer('http://{s}.tile.osm.org/{z}/{x}/{y}.png',
+  {attribution: 'Map data &copy; <a href="http://openstreetmap.org">OpenStreetMap</a> contributors, <a href="http://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>'}
+  ).addTo(map);
+
+  layercontrol = L.control.layers({"OpenStreetMap": osmLayer}, []).addTo(map);
+
+  map.on('click', function(e) {
+    // create marker
+    var m = new L.marker(e.latlng).addTo(map);
+    // add a species attribute
+    m.species = undefined;
+    // create and show empty popup, will be filled on popupopen
+    m.bindPopup("<div/>").openPopup();
+    // store in global speciesMarkers array
+    speciesMarkers.push(m);
+  });
+
+  map.on('popupopen', function(evt) {
+    // create a select dropdown menu
+    var selectElement = $(constructSelectElementText(evt.popup._source.species));
+    // attach event handler
+    selectElement.on('change', function() {
+      // popup._source is the marker, store the selected list value on the marker
+      evt.popup._source.species = selectElement.val();
+      // trigger marker change function
+      markerChange(evt.popup._source, evt.popup._source.species);
+    });
+    // set the select element as the contents of the popup. The [0] gets the native DOM element, which is necessary for setContent.
+    evt.popup.setContent(selectElement[0]);
+  });
+
+  // dataset id is first column in csv; write CSV if changed
+  $(datasetid).on('change', writeCSV);
+
+  // CSV separator character; store and write CSV if changed
+  $(sc).on('change',function() {
+    sepChar = $(sc).val();
+    writeCSV();
+  });
+ 
+  sepChar = $(sc).val();
+
+  $(helpcard).hide();
+
+  $(openhelp).on('click', function(e) {
+    $(helpcard).toggle();
+    $(helpcard).css({
+                "position": "absolute",
+                "background-color":"white",
+                "left": e.pageX + 'px',
+                "top": e.pageY + 'px'
+            })
+  });
+
+  $(closehelp).on('click',function() {
+    $(helpcard).hide();
+  });
+
+  // TIFF loading handler
+  document.getElementById('fileInput').onchange = async function() {
+    tiff = await GeoTIFF.fromBlob(document.getElementById('fileInput').files[0]);
+    const image = await tiff.getImage();
+    const width = image.getWidth();
+    const height = image.getHeight();
+  
+    $(log).append("Width: " + width+"<br/>");
+    $(log).append("Height: " + height+"<br/>");
+    try {
+      $(log).append("BBOX: " + image.getBoundingBox().join(",")+"<br/>");
+      $(log).append("EPSG (projected): " + image.geoKeys.ProjectedCSTypeGeoKey+"<br/>");
+      $(log).append("EPSG (geographic): " + image.geoKeys.GeographicTypeGeoKey+"<br/>");
+    } catch(err) {
+      $(log).append("<p class='w3-red'>Error: "+err.message+"</p>");
+      return;
+    }
+
+   canvas = document.createElement('canvas');
+   //canvas = document.getElementById('canvas');
+   const ctx = canvas.getContext('2d');
+   // Set width and height
+   canvas.width = width;
+   canvas.height = height;
+
+  // this async function is executed immediately ;-)
+  (async function() {
+    // read TIFF as RGB
+    const rgb = await image.readRGB();
+    // get ImageData object from RGB, set the color from the text box as transparent
+    const img = rgbArray2ImageData(rgb,width,height,$(transpColor).val().split(","));
+    // draw image on the offscreen canvas
+    ctx.putImageData(img, 0, 0);
+    // get the base64 encoded image from the canvas
+    dataURL = canvas.toDataURL("image/png")
+
+    // for debugging show a preview of the image
+    $(log).append("<img src='"+dataURL+"' width='100' heigth='100'/>");
+    const b = image.getBoundingBox();
+    var bounds;
+    if (image.geoKeys.GeographicTypeGeoKey == 4326) {
+      // latLngBounds is the other way round...
+      bounds = L.latLngBounds( [[b[1],b[0]],[b[3],b[2]]] );
+
+    } else if (image.geoKeys.ProjectedCSTypeGeoKey) {
+      const crs = "EPSG:"+image.geoKeys.ProjectedCSTypeGeoKey;
+      console.log(crs);
+      const transform = proj4(crs,"EPSG:4326")
+      const first = transform.forward([b[0],b[1]]);
+      const second = transform.forward([b[2],b[3]]);
+
+      console.log([first  , second])
+      bounds = L.latLngBounds( [ [first[1],first[0]],[second[1],second[0]]] );
+    }
+    $(log).append("Bounds: " + bounds.toBBoxString()+"\n");
+    // create leaflet layer from data url (which is the base64 encoded image)
+    const imgLayer = L.imageOverlay(dataURL, bounds);
+    // add to map and layercontrol, layer description is the filename
+    layercontrol.addOverlay(imgLayer,document.getElementById("fileInput").files[0].name);
+    // set dataset id to the filename, makes distinguishing the CSV from multiple users easy
+    $(datasetid).val(document.getElementById("fileInput").files[0].name);
+  })(); // <--- that mess of characters executes the just-defined async function
+
+
+  }
+
+}); // end $(), which is the jquery init function
+
+/**
+* called after a marker has changed 
+*
+* @param marker the leaflet marker
+* @param species the new species value
+*/
+var markerChange = function(marker,species) {
+  // don't do anything fancy, just redraw the CSV
+  writeCSV();
+}
+
+/** 
+* write the CSV textbox from the speciesMarkers array
+*/
+var writeCSV = function() {
+  // csv header
+  var res = "datasetid"+sepChar+"lat"+sepChar+"lon"+sepChar+"species\n";
+  const dsid = $(datasetid).val();
+
+  for (var i=0;i<speciesMarkers.length;i++) {
+      
+    res += dsid + sepChar
+           + speciesMarkers[i].getLatLng().lat.toFixed(5) + sepChar
+           + speciesMarkers[i].getLatLng().lng.toFixed(5) + sepChar
+           + speciesMarkers[i].species
+           + "\n";
+  
+  }
+  // write CSV to the textbox
+  $(outcsv).val(res);
+}
+
+/**
+* construct a select element with values from the form element "#possiblespecies".
+*
+* @param selectedText the string that should be selected, defaults to undefined
+*
+* @return A string like '<select><option value="...">...</option></select>'
+*/
+var constructSelectElementText = function(selectedText="undefined") {
+  var r = "<select>";
+  var sp = $(possiblespecies).val().split(",");
+  // add undefined as selectable value
+  sp.push("undefined");
+  for (var i=0;i<sp.length;i++) {
+    // create option, mark selected if its equal to the function parameter
+    r += "<option value='"+sp[i]+"'"+(sp[i]==selectedText?" selected":"")+">"+sp[i]+"</option>";
+  }
+  r += "</select>";
+  return r;
+}
+
+/** 
+* create a ImageData object soitable for drawing on a canvas from an array of RGB values
+*
+* adapted from https://stackoverflow.com/a/45992175/2168905
+*
+* @param in_rgb the array of RGB values, e.g. [255,255,255,0,0,0,12,23,36,...] . No nesting.
+* @param w width of image
+* @param h height of image
+* @param transpColor an array of one color RGB values that should be set fully transparent in the returned image. Defaults to [255,255,255] (white). Set undefined for none.
+*
+* @return an ImageData object from the in_rgb image of dimension w,h and with transpColor transparent
+*/
+var rgbArray2ImageData = function(in_rgb,w,h,transpColor=[255,255,255]) {
+  var srcBmp = in_rgb, width = w, height = h;
+  var dstBmp = new Uint8ClampedArray(width * height * 4);
+  var ptrSrc = 0;             // source pointer
+  var ptrDst = 0;             // destination pointer
+  var dstLen = dstBmp.length;
+
+  var alpha; // alpha value
+  while(ptrDst < dstLen) {
+    if (transpColor && srcBmp[ptrSrc] == transpColor[0] && srcBmp[ptrSrc+1] == transpColor[1] && srcBmp[ptrSrc+2] == transpColor[2]) {
+      alpha = 0;
+    } else {
+      alpha = 255;
+    }
+    dstBmp[ptrDst++] = srcBmp[ptrSrc++];  // copy R
+    dstBmp[ptrDst++] = srcBmp[ptrSrc++];  // copy G
+    dstBmp[ptrDst++] = srcBmp[ptrSrc++];  // copy B
+    dstBmp[ptrDst++] = alpha;               // set alpha to full (255 => no transparency, 0 => fully transparent)
+  }
+
+  // finally create a ImageData object using the typed array
+  var idata = new ImageData(dstBmp, width, height);
+  
+  return idata;
+  
+
+}
+
+</script>
+
+</script>
+
+<style type="text/css">
+#map {
+    height: 360px;
+    width: 500px;
+}
+
+h2 {
+  margin-top:0.1em;
+  margin-left:0.1em;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+#helpcard {
+  width: 30%;
+  height: 500px;
+  scrolling: auto;
+  z-index: 1000;
+}
+</style>
+
+</head>
+<body>
+<div class="w3-container w3-right">
+<a href="#" id="openhelp">about/help</a>
+<ul class="w3-ul w3-border">
+<li>Choose file overlay<input type="file" id="fileInput"/><br/>
+Display color as transparent (RGB): <input type="text" id="transpColor" value="255,255,255"/>
+</li>
+<li>
+Possible observations, separated by comma: <input type="text" id="possiblespecies" value="sheep,cow,velociraptor,trex,elefant,another_cow" size="70"/><br/>
+Dataset id: <input type="text" id="datasetid" name="datasetid" value="s1"/><br/>
+Separator character: <input type="text" id="sc" name="sc" value=";" size="1"/><br/>
+</li>
+<li>
+<textarea id="outcsv" rows="10" cols="50">
+</textarea>
+</li>
+<li>
+<div id="log" class="w3-yellow">
+</div>
+</li>
+</ul>
+
+
+</div>
+<div id="map" class="w3-left w3-margin"></div>
+<div class="w3-container" id="helpcard">
+  <div class="w3-card-4">
+
+  <header class="w3-container w3-blue">
+    
+    <h1>About this tool / help <span id="closehelp" class="w3-button w3-display-topright">&times;</span></h1>
+  </header>
+
+  <div class="w3-container">
+  <p>This tool was created as an exercise inspired by the GIS.SE question <a href="https://gis.stackexchange.com/q/375072/15183">How to digitise animal positions in aerial photos?</a>. A user should be able to digitize animal positions from aerial imagery and set the species.<br/>
+  I learned loads of cool techniques and Javascript libraries while writing this answer.</p>
+
+  <p>The basis is <a href="//leafletjs.com">leaflet</a>. On click of the map a marker is created at the click position. The marker popup is created on the fly and consists only of a dropdown select element. The possible values for the select list are created from the text boxes on the right, so fully customizable. On change of the select element its value is written to the (custom) <code>species</code> attribute of the marker. Markers are stored in a global array.
+  </p>
+  <p>Each change of a marker dropdown triggers a full rewrite of the output CSV. This is the main output and can be mailed to someone, used as input for a spreadsheet etc. It would also be possible to trigger AJAX calls on marker value change, so one could store the markers at some remote net location, if needed.
+  </p>
+  <p>Images can be added via the file overlay input. Only GeoTIFF files with photometric interpretation RGB, 3 pixels per sample and data type UInt8 are supported. Hint: These images are created by QGIS when exporting a map view to an image.
+The TIF reading is done with <a href="https://geotiffjs.github.io/">geotiff.js</a>. Images with coordinates in EPSG:4326 (WGS84) are displayed right away, the corner coordinates of images in other CRS are reprojected to wgs84 using <a href="http://proj4js.org/">proj4js</a>.
+  </p>
+  </div>
+
+  </div> 
+</div>
+</body>
+</html>
