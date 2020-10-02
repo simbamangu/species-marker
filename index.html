@@ -35,7 +35,7 @@ proj4.defs("EPSG:4647","+proj=tmerc +lat_0=0 +lon_0=9 +k=0.9996 +x_0=32500000 +y
 
 $(function() {
  
-  var map = L.map("map").setView([51.52, 11], 8);
+  var map = L.map("map", {maxZoom: 25}).setView([51.52, 11], 8);
 
   // OSM layer
   var osmLayer = L.tileLayer('http://{s}.tile.osm.org/{z}/{x}/{y}.png',
@@ -186,8 +186,8 @@ var writeCSV = function() {
   for (var i=0;i<speciesMarkers.length;i++) {
       
     res += dsid + sepChar
-           + speciesMarkers[i].getLatLng().lat.toFixed(5) + sepChar
-           + speciesMarkers[i].getLatLng().lng.toFixed(5) + sepChar
+           + speciesMarkers[i].getLatLng().lat.toFixed(6) + sepChar
+           + speciesMarkers[i].getLatLng().lng.toFixed(6) + sepChar
            + speciesMarkers[i].species
            + "\n";
   
