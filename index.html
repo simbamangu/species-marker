@@ -32,10 +32,11 @@ proj4.defs("EPSG:31468","+proj=tmerc +lat_0=0 +lon_0=12 +k=1 +x_0=4500000 +y_0=0
 proj4.defs("EPSG:25832","+proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs");
 proj4.defs("EPSG:4647","+proj=tmerc +lat_0=0 +lon_0=9 +k=0.9996 +x_0=32500000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs");
 
+var map;
 
 $(function() {
  
-  var map = L.map("map", {maxZoom: 25}).setView([51.52, 11], 8);
+  map = L.map("map", {maxZoom: 25}).setView([51.52, 11], 8);
 
   // OSM layer
   var osmLayer = L.tileLayer('http://{s}.tile.osm.org/{z}/{x}/{y}.png',
@@ -82,6 +83,8 @@ $(function() {
 
   $(helpcard).hide();
 
+  $(loadingindicator).hide();
+  
   $(openhelp).on('click', function(e) {
     $(helpcard).toggle();
     $(helpcard).css({
@@ -95,6 +98,8 @@ $(function() {
   $(closehelp).on('click',function() {
     $(helpcard).hide();
   });
+
+  
 
   // TIFF loading handler
   document.getElementById('fileInput').onchange = async function() {
@@ -123,6 +128,8 @@ $(function() {
 
   // this async function is executed immediately ;-)
   (async function() {
+    // show loading indicator
+    $(loadingindicator).show();
     // read TIFF as RGB
     const rgb = await image.readRGB();
     // get ImageData object from RGB, set the color from the text box as transparent
@@ -133,7 +140,9 @@ $(function() {
     dataURL = canvas.toDataURL("image/png")
 
     // for debugging show a preview of the image
-    $(log).append("<img src='"+dataURL+"' width='100' heigth='100'/>");
+    var im = $("<img src='"+dataURL+"' width='100' heigth='100'/>");
+    
+    $(log).append(im);
     const b = image.getBoundingBox();
     var bounds;
     if (image.geoKeys.GeographicTypeGeoKey == 4326) {
@@ -150,6 +159,7 @@ $(function() {
       console.log([first  , second])
       bounds = L.latLngBounds( [ [first[1],first[0]],[second[1],second[0]]] );
     }
+    
     $(log).append("Bounds: " + bounds.toBBoxString()+"\n");
     // create leaflet layer from data url (which is the base64 encoded image)
     const imgLayer = L.imageOverlay(dataURL, bounds);
@@ -157,6 +167,11 @@ $(function() {
     layercontrol.addOverlay(imgLayer,document.getElementById("fileInput").files[0].name);
     // set dataset id to the filename, makes distinguishing the CSV from multiple users easy
     $(datasetid).val(document.getElementById("fileInput").files[0].name);
+    // hide loading indicator
+    $(loadingindicator).hide();
+    // zoom and pan to image
+    map.fitBounds(bounds);
+    imgLayer.addTo(map);
   })(); // <--- that mess of characters executes the just-defined async function
 
 
@@ -278,6 +293,16 @@ h2 {
   scrolling: auto;
   z-index: 1000;
 }
+
+#loadingindicator {
+  position: relative,
+  display: none,
+  background-color: white,
+  left: 200px,
+  top:  80px,
+  width: 30%,
+  z-index: 1000
+}
 </style>
 
 </head>
@@ -285,7 +310,7 @@ h2 {
 <div class="w3-container w3-right">
 <a href="#" id="openhelp">about/help</a>
 <ul class="w3-ul w3-border">
-<li>Choose file overlay<input type="file" id="fileInput"/><br/>
+<li>Choose file overlay<input type="file" id="fileInput"/> <span id="loadingindicator" class="w3-yellow">Loading...please wait</span> <br/>
 Display color as transparent (RGB): <input type="text" id="transpColor" value="255,255,255"/>
 </li>
 <li>
